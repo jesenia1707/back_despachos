@@ -1,0 +1,56 @@
+name: CI/CD Innovatech - Backend
+
+on:
+  push:
+    branches: [ "main" ] 
+
+jobs:
+  build-push-deploy-backend:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v3
+
+    - name: Configurar credenciales AWS
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+        aws-region: us-east-1 # Región por defecto de AWS Academy
+
+    - name: Login en Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build imagen Backend y push a ECR
+      run: |
+        # Si tu código de backend no está en una carpeta llamada 'backend', borra la línea de abajo o cámbiala
+        # cd backend 
+        docker build -t innovatech-backend .
+        docker tag innovatech-backend:latest ${{ secrets.ECR_REPO_URL_BACKEND }}:latest
+        docker push ${{ secrets.ECR_REPO_URL_BACKEND }}:latest
+
+    - name: Desplegar en EC2 vía SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.EC2_BACKEND_HOST_IP }}
+        username: ec2-user
+        key: ${{ secrets.EC2_SSH_KEY }}
+        script: |
+          # Detener la ejecución si hay errores
+          set -e
+          
+          # Iniciar sesión en ECR dentro del servidor EC2
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ secrets.ECR_REPO_URL_BACKEND }}
+          
+          # Descargar la última imagen cargada
+          docker pull ${{ secrets.ECR_REPO_URL_BACKEND }}:latest
+          
+          # Detener y remover el contenedor anterior si ya existía
+          docker stop innovatech-backend || true
+          docker rm innovatech-backend || true
+          
+          # Lanzar el nuevo contenedor en el puerto 8080 (el que abrimos en tu grupo de seguridad)
+          docker run -d --name innovatech-backend -p 8080:8080 ${{ secrets.ECR_REPO_URL_BACKEND }}:latest
